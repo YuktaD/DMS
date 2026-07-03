@@ -1,21 +1,31 @@
 import jwt from "jsonwebtoken";
 import UserModel from "../models/userModel.js";
 import DocumentModel from "../models/documentModel.js";
+import { securityQuestions } from "../middleware/validator.js";
 import { hashPassword, comparePassword } from "../utils/hashing.js";
+
+const normalizeSecurityAnswer = (value = "") => value.trim().toLowerCase();
+const isValidSecurityQuestion = (question = "") => securityQuestions.includes(question);
 
 // Register User
 export const registerUser = async (req, res) => {
-  const { userName, userEmail, userPassword, userMobileNo } = req.body;
+  const { userName, userEmail, userPassword, userMobileNo, securityQuestion, securityAnswer } = req.body;
   try {
-    if (!userName || !userEmail || !userPassword)
+    if (!userName || !userEmail || !userPassword || !securityQuestion || !securityAnswer)
       return res.status(400).json({ success: false, message: "All fields are required" });
 
-    const existing = await UserModel.findOne({ userEmail });
+    if (!isValidSecurityQuestion(securityQuestion)) {
+      return res.status(400).json({ success: false, message: "Please select a valid security question" });
+    }
+
+    const existing = await UserModel.findOne({ userEmail: userEmail?.trim().toLowerCase() });
     if (existing)
       return res.status(409).json({ success: false, message: "Email already registered" });
 
     const hashed = await hashPassword(userPassword, 12);
-    const user = await UserModel.create({ userName, userEmail, userPassword: hashed, userMobileNo });
+    const normalizedAnswer = normalizeSecurityAnswer(securityAnswer);
+    const hashedSecurityAnswer = await hashPassword(normalizedAnswer, 12);
+    const user = await UserModel.create({ userName, userEmail: userEmail?.trim().toLowerCase(), userPassword: hashed, userMobileNo, securityQuestion, securityAnswerHash: hashedSecurityAnswer });
     user.userPassword = undefined;
 
     const token = jwt.sign({ userId: user._id, userEmail: user.userEmail }, process.env.TOKEN_SECRET, { expiresIn: process.env.TOKEN_EXPIRE });
@@ -34,7 +44,7 @@ export const loginUser = async (req, res) => {
     if (!userEmail || !userPassword)
       return res.status(400).json({ success: false, message: "Email and password required" });
 
-    const user = await UserModel.findOne({ userEmail }).select("+userPassword");
+    const user = await UserModel.findOne({ userEmail: userEmail?.trim().toLowerCase() }).select("+userPassword");
     if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
     const match = await comparePassword(userPassword, user.userPassword);
@@ -116,41 +126,31 @@ export const markNotificationsRead = async (req, res) => {
   }
 };
 
-// Send OTP for forgot password (user)
 export const sendUserForgotPasswordOTP = async (req, res) => {
   const { userEmail } = req.body;
   try {
-    const user = await UserModel.findOne({ userEmail });
+    const user = await UserModel.findOne({ userEmail: userEmail?.trim().toLowerCase() });
     if (!user) return res.status(404).json({ success: false, message: "No account found with this email" });
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    user.resetPasswordOTP = otp;
-    user.resetPasswordOTPExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
-    await user.save();
-    // In production: send email. For now log it.
-    console.log(`[USER FORGOT PASSWORD OTP] Email: ${userEmail}, OTP: ${otp}`);
-    res.json({ success: true, message: `OTP sent to ${userEmail}` });
+    return res.json({ success: true, securityQuestion: user.securityQuestion });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error sending OTP" });
+    res.status(500).json({ success: false, message: "Error fetching security question" });
   }
 };
 
-// Verify OTP + reset password (user)
 export const verifyUserOTPAndResetPassword = async (req, res) => {
-  const { userEmail, otp, newPassword } = req.body;
+  const { userEmail, securityAnswer, newPassword } = req.body;
   try {
-    const user = await UserModel.findOne({ userEmail }).select("+userPassword +resetPasswordOTP +resetPasswordOTPExpiry");
+    const user = await UserModel.findOne({ userEmail: userEmail?.trim().toLowerCase() }).select("+securityAnswerHash +userPassword");
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
-    if (!user.resetPasswordOTP || user.resetPasswordOTP !== otp)
-      return res.status(400).json({ success: false, message: "Invalid OTP" });
-    if (user.resetPasswordOTPExpiry < new Date())
-      return res.status(400).json({ success: false, message: "OTP expired. Please request a new one." });
+    const normalizedAnswer = normalizeSecurityAnswer(securityAnswer);
+    const isAnswerCorrect = await comparePassword(normalizedAnswer, user.securityAnswerHash);
+    if (!isAnswerCorrect) return res.status(400).json({ success: false, message: "Incorrect security answer" });
     const hashed = await hashPassword(newPassword, 12);
     user.userPassword = hashed;
-    user.resetPasswordOTP = undefined;
-    user.resetPasswordOTPExpiry = undefined;
     await user.save();
     res.json({ success: true, message: "Password reset successfully! Please login." });
   } catch (error) {
     res.status(500).json({ success: false, message: "Error resetting password" });
   }
 };
+

@@ -1,31 +1,22 @@
 import nodemailer from 'nodemailer';
-import {config} from 'dotenv';
+import { config } from 'dotenv';
 
-config({ path:'./config/config.env' });
-console.log(process.env.NODEMAILER_SERVICE,"this is service");
-// process.env.NODEMAILER_SENDING_EMAIL_ADDRESS
-const transport = await nodemailer.createTransport({
-    // service: "gmail",
-    // service: process.env.NODEMAILER_SERVICE,
-    host:process.env.NODEMAILER_SERVICE_HOST,  
-    secure:true,
-    port: 465,
-    secureConnection: false, 
-    tls: {
-      ciphers:'SSLv3'
-  },
-  requireTLS:true,
-  
+config({ path: './config/config.env' });
 
-  port: 465,
-    debug: true,
+const host = process.env.NODEMAILER_SERVICE_HOST;
+const port = Number(process.env.NODEMAILER_SERVICE_PORT || 587);
+const user = process.env.NODEMAILER_SENDING_EMAIL_ADDRESS;
+const pass = process.env.NODEMAILER_SENDING_EMAIL_PASSWORD;
+const secure = String(process.env.NODEMAILER_SECURE || 'false').toLowerCase() === 'true';
 
-    auth: {
-      // user: "admin@psycortex.in ",
-      user: process.env.NODEMAILER_SENDING_EMAIL_ADDRESS,
-      // pass: "Psycortex@9$",
-      pass:  process.env.NODEMAILER_SENDING_EMAIL_PASSWORD,
-    },
-  });
+const transport = host && user && pass
+  ? nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass },
+    })
+  : null;
 
+export const isMailConfigured = Boolean(transport);
 export default transport;

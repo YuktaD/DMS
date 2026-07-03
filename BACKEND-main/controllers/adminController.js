@@ -5,8 +5,10 @@ import {
   changePasswordSchema,
   registerSchemaForAdmin,
   loginSchemaForAdmin,
-  sendForgotPasswordCodeForAdminSchema,
+  forgotPasswordQuestionSchema,
+  resetPasswordWithSecurityAnswerSchema,
   uploadDocumentSchema,
+  securityQuestions,
 } from "../middleware/validator.js";
 import adminModel from "../models/adminModel.js";
 import {
@@ -15,14 +17,25 @@ import {
   hmacProcess,
 } from "../utils/hashing.js";
 import { v2 as cloudinary } from "cloudinary";
-import transport from "../middleware/sendMail.js";
-import csv from "csvtojson";
 import fs from "fs";
 
-import axios from "axios";
-import sendEmailNotification from "../middleware/sendEmailNotification.js";
+
 import DocumentModel from "../models/documentModel.js";
 import DocumentVersionModel from "../models/DocumentVersionModel.js";
+import DocumentHistory from "../models/DocumentHistory.js";
+
+const normalizeSecurityAnswer = (value = "") => value.trim().toLowerCase();
+const isValidSecurityQuestion = (question = "") => securityQuestions.includes(question);
+const DEFAULT_SECURITY_QUESTION = securityQuestions[0] || "What is your favorite food?";
+
+const getAdminSecurityQuestion = (existingAdmin) => {
+  const savedQuestion = existingAdmin?.securityQuestion?.trim();
+  if (savedQuestion) return savedQuestion;
+
+  if (!existingAdmin) return DEFAULT_SECURITY_QUESTION;
+
+  return DEFAULT_SECURITY_QUESTION;
+};
 
 const registerAdmin = async (req, res) => {
    console.log("===== REGISTER REQUEST =====");
@@ -34,6 +47,8 @@ const registerAdmin = async (req, res) => {
     adminName,
     adminLocation,
     adminMobileNo,
+    securityQuestion,
+    securityAnswer,
   } = req.body;
 
   try {
@@ -47,12 +62,18 @@ const registerAdmin = async (req, res) => {
       });
     }
 
+    if (!isValidSecurityQuestion(securityQuestion)) {
+      return res.status(400).json({ success: false, message: "Please select a valid security question" });
+    }
+
     // Validate input data
     const { error, value } = registerSchemaForAdmin.validate({
       adminEmailId,
       adminPassword,
       adminName,
       adminLocation,
+      securityQuestion,
+      securityAnswer,
       adminMobileNo,
     });
 
@@ -70,18 +91,22 @@ const registerAdmin = async (req, res) => {
         .json({ success: false, message: "Admin already exists!" });
     }
 
-    // Hash the password
+    // Hash the password and security answer
     const hashedPassword = await hashPassword(adminPassword, 12);
+    const normalizedAnswer = normalizeSecurityAnswer(securityAnswer);
+    const hashedSecurityAnswer = await hashPassword(normalizedAnswer, 12);
 
     const verificationCodeValidation = Date.now() + 24 * 60 * 60 * 1000; // 24 hours validity
 
     // Prepare the admin object
     const adminData = {
-      adminEmailId,
+      adminEmailId: adminEmailId?.trim().toLowerCase(),
       adminPassword: hashedPassword,
       adminName,
       adminLocation,
       adminMobileNo,
+      securityQuestion,
+      securityAnswerHash: hashedSecurityAnswer,
       verified: false,
       verificationCodeValidation,
       adminImagelink: {
@@ -168,7 +193,7 @@ const loginAdmin = async (req, res) => {
 
     // Check if admin exists
     const existingAdmin = await adminModel
-      .findOne({ adminEmailId })
+      .findOne({ adminEmailId: adminEmailId?.trim().toLowerCase() })
       .select("+adminPassword");
     // console.log(existingAdmin, 'this is existing');
 
@@ -237,8 +262,6 @@ const getAdmin = async (req, res) => {
         .json({ success: false, message: "Admin not found" });
     }
 
-    // If you need to include image data like in the doctor profile, handle it here
-    // You can add any necessary logic to return image data or any other fields
 
     // Return the user data as a response
     return res.status(200).json({
@@ -262,388 +285,8 @@ const logoutAdmin = async (req, res) => {
   });
 };
 
-// const getVersionedFileName = (originalFileName, version) => {
-//   const fileNameParts = originalFileName.split('.');
-//   const extension = fileNameParts.pop();
-//   const baseName = fileNameParts.join('.');
-//   return `${baseName}_V${version}.${extension}`;
-// };
-
-// const uploadDocument = async (req, res) => {
-//   const { title, description } = req.body;
-//   const pdfFile = req.file;
-//   let imageTempPath = null;
-
-//   try {
-//     if (!pdfFile) {
-//       return res.status(400).json({ success: false, message: "PDF file is required!" });
-//     }
-
-//     imageTempPath = pdfFile.path;
-    
-//     // Upload to Cloudinary
-//     const cloudinaryResponse = await cloudinary.uploader.upload(
-//       imageTempPath,
-//       { 
-//         folder: "Documents_Folder",
-//         resource_type: 'raw'
-//       }
-//     );
-
-//     if (!cloudinaryResponse || cloudinaryResponse.error) {
-//       if (fs.existsSync(imageTempPath)) {
-//         fs.unlinkSync(imageTempPath);
-//       }
-//       return res.status(400).json({
-//         success: false,
-//         message: "Failed to upload document to Cloudinary",
-//       });
-//     }
-
-//     // Create document in database
-//     const newDocument = await DocumentModel.create({
-//       title,
-//       description,
-//       pdfUrl: {
-//         public_id: cloudinaryResponse.public_id,
-//         url: cloudinaryResponse.secure_url
-//       },
-//       fileName: pdfFile.originalname,
-//       currentVersion: 0
-//     });
-
-//     // Clean up temp file
-//     if (fs.existsSync(imageTempPath)) {
-//       fs.unlinkSync(imageTempPath);
-//     }
-
-//     res.status(201).json({
-//       success: true,
-//       document: newDocument,
-//       message: "Document uploaded successfully",
-//     });
-
-//   } catch (error) {
-//     if (imageTempPath && fs.existsSync(imageTempPath)) {
-//       fs.unlinkSync(imageTempPath);
-//     }
-    
-//     console.error('Upload document error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Something went wrong while uploading document",
-//     });
-//   }
-// };
-
-// const updateDocument = async (req, res) => {
-//   const { id } = req.params;
-//   const { title, description, createVersion } = req.body;
-//   const pdfFile = req.file;
-//   let imageTempPath = null;
-
-//   console.log("Request ID:", id);
-//   console.log("Request Body - Title:", title);
-//   console.log("Request Body - Description:", description);
-//   console.log("Request File:", pdfFile);
-
-//   try {
-//     // Check if the document exists
-//     const existingDocument = await DocumentModel.findById(id);
-//     if (!existingDocument) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Document not found",
-//       });
-//     }
-
-//     // If creating a new version, delegate to version controller
-//     if (createVersion === "true") {
-//       return await versionController.createNewVersion(req, res, existingDocument);
-//     }
-
-//     // Prepare the update data
-//     const updateData = {
-//       title,
-//       description,
-//       currentVersion: existingDocument.currentVersion,
-//     };
-
-//     // Handle PDF file update if a new file is provided
-//     if (pdfFile) {
-//       imageTempPath = pdfFile.path;
-//       console.log("Temporary file path:", imageTempPath);
-
-//       // Delete the existing PDF from Cloudinary if it exists
-//       if (existingDocument.pdfUrl && existingDocument.pdfUrl.public_id) {
-//         console.log("Deleting existing PDF from Cloudinary...");
-//         await cloudinary.uploader.destroy(existingDocument.pdfUrl.public_id, {
-//           resource_type: "raw",
-//         });
-//       }
-
-//       console.log("Uploading new PDF to Cloudinary...");
-//       const cloudinaryResponse = await cloudinary.uploader.upload(imageTempPath, {
-//         folder: "Documents_Folder",
-//         resource_type: "raw",
-//         public_id: pdfFile.originalname.split(".")[0], // Remove extension for public_id
-//       });
-
-//       if (!cloudinaryResponse || cloudinaryResponse.error) {
-//         console.error("Cloudinary upload failed:", cloudinaryResponse.error);
-//         if (fs.existsSync(imageTempPath)) {
-//           fs.unlinkSync(imageTempPath);
-//         }
-//         return res.status(400).json({
-//           success: false,
-//           message: "Failed to upload new document to Cloudinary",
-//         });
-//       }
-
-//       // Update the document's PDF URL and file name
-//       updateData.pdfUrl = {
-//         public_id: cloudinaryResponse.public_id,
-//         url: cloudinaryResponse.secure_url,
-//       };
-//       updateData.fileName = pdfFile.originalname;
-//       console.log("PDF URL updated:", updateData.pdfUrl);
-//     }
-
-//     // Update the document in the database
-//     console.log("Updating document in the database...");
-//     const updatedDocument = await DocumentModel.findByIdAndUpdate(
-//       id,
-//       updateData,
-//       { new: true, runValidators: true }
-//     );
-
-//     // Clean up the temporary file
-//     if (imageTempPath && fs.existsSync(imageTempPath)) {
-//       console.log("Cleaning up temporary file...");
-//       fs.unlinkSync(imageTempPath);
-//     }
-
-//     console.log("Operation successful");
-//     res.status(200).json({
-//       success: true,
-//       document: updatedDocument,
-//       message: "Document updated successfully",
-//     });
-//   } catch (error) {
-//     console.error("Error in updateDocument:", error);
-
-//     // Clean up the temporary file in case of an error
-//     if (imageTempPath && fs.existsSync(imageTempPath)) {
-//       console.log("Cleaning up temporary file due to error...");
-//       fs.unlinkSync(imageTempPath);
-//     }
-
-//     res.status(500).json({
-//       success: false,
-//       message: "Something went wrong while updating the document",
-//     });
-//   }
-// };
-
-// // versionController.js
-// const createNewVersion = async (req, res) => {
-//   const { title, description } = req.body;
-//   const { id } = req.params;
-//   const pdfFile = req.file;
-//   let imageTempPath = null;
-
-
-//   const existingDocument = await DocumentModel.findById(id);
-//   try {
-//     console.log("Creating a new version of the document...");
-//     await DocumentVersionModel.create({
-//       originalDocument: existingDocument._id,
-//       version: existingDocument.currentVersion,
-//       title: existingDocument.title,
-//       description: existingDocument.description,
-//       pdfUrl: existingDocument.pdfUrl,
-//       fileName: existingDocument.fileName,
-//     });
-
-//     // Increment the version number
-//     existingDocument.currentVersion += 1;
-//     console.log("New version number:", existingDocument.currentVersion);
-
-//     // Prepare the update data
-//     const updateData = {
-//       title,
-//       description,
-//       currentVersion: existingDocument.currentVersion,
-//     };
-
-//     // Handle PDF file update if a new file is provided
-//     if (pdfFile) {
-//       imageTempPath = pdfFile.path;
-//       console.log("Temporary file path:", imageTempPath);
-
-//       // Delete the existing PDF from Cloudinary if it exists
-//       if (existingDocument.pdfUrl && existingDocument.pdfUrl.public_id) {
-//         console.log("Deleting existing PDF from Cloudinary...");
-//         await cloudinary.uploader.destroy(existingDocument.pdfUrl.public_id, {
-//           resource_type: "raw",
-//         });
-//       }
-
-//       const versionedFileName = getVersionedFileName(
-//         pdfFile.originalname,
-//         existingDocument.currentVersion
-//       );
-
-//       console.log("Uploading new PDF to Cloudinary...");
-//       const cloudinaryResponse = await cloudinary.uploader.upload(imageTempPath, {
-//         folder: "Documents_Folder",
-//         resource_type: "raw",
-//         public_id: versionedFileName.split(".")[0], // Remove extension for public_id
-//       });
-
-//       if (!cloudinaryResponse || cloudinaryResponse.error) {
-//         console.error("Cloudinary upload failed:", cloudinaryResponse.error);
-//         if (fs.existsSync(imageTempPath)) {
-//           fs.unlinkSync(imageTempPath);
-//         }
-//         return res.status(400).json({
-//           success: false,
-//           message: "Failed to upload new document version to Cloudinary",
-//         });
-//       }
-
-//       // Update the document's PDF URL and file name
-//       updateData.pdfUrl = {
-//         public_id: cloudinaryResponse.public_id,
-//         url: cloudinaryResponse.secure_url,
-//       };
-//       updateData.fileName = versionedFileName;
-//       console.log("PDF URL updated:", updateData.pdfUrl);
-//     }
-
-//     // Update the document in the database
-//     console.log("Updating document in the database...");
-//     const updatedDocument = await DocumentModel.findByIdAndUpdate(
-//       existingDocument._id,
-//       updateData,
-//       { new: true, runValidators: true }
-//     );
-
-//     // Clean up the temporary file
-//     if (imageTempPath && fs.existsSync(imageTempPath)) {
-//       console.log("Cleaning up temporary file...");
-//       fs.unlinkSync(imageTempPath);
-//     }
-
-//     console.log("Operation successful");
-//     res.status(200).json({
-//       success: true,
-//       document: updatedDocument,
-//       message: "Document version created and updated successfully",
-//     });
-//   } catch (error) {
-//     console.error("Error in createNewVersion:", error);
-
-//     // Clean up the temporary file in case of an error
-//     if (imageTempPath && fs.existsSync(imageTempPath)) {
-//       console.log("Cleaning up temporary file due to error...");
-//       fs.unlinkSync(imageTempPath);
-//     }
-
-//     res.status(500).json({
-//       success: false,
-//       message: "Something went wrong while creating new document version",
-//     });
-//   }
-// };
-
-
-// const getAllDocuments = async (req, res) => {
-//   try {
-//     const documents = await DocumentModel
-//       .find()
-//       .sort('-createdAt');
-
-//     res.status(200).json({
-//       success: true,
-//       documents,
-//       message: "Documents fetched successfully",
-//     });
-//   } catch (error) {
-//     console.error('Get documents error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Something went wrong while fetching documents",
-//     });
-//   }
-// };
-
-// const getDocumentVersions = async (req, res) => {
-//   const { id } = req.params;
-
-//   try {
-//     const versions = await DocumentVersionModel
-//       .find({ originalDocument: id })
-//       .sort('-version');
-//     const currentDocument = await DocumentModel.findById(id);
-
-//     if (!currentDocument) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Document not found"
-//       });
-//     }
-
-//     res.status(200).json({
-//       success: true,
-//       currentDocument,
-//       versions,
-//       message: "Document versions fetched successfully"
-//     });
-
-//   } catch (error) {
-//     console.error('Get document versions error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Something went wrong while fetching document versions"
-//     });
-//   }
-// };
-
-// const deleteDocument = async (req, res) => {
-//   const { id } = req.params;
-
-//   try {
-//     const document = await documentModel.findById(id);
-
-//     if (!document) {
-//       return res
-//         .status(404)
-//         .json({ success: false, message: "Document not found!" });
-//     }
-
-//     // Delete from Cloudinary
-//     const publicId = document.pdfUrl.split('/').pop().split('.')[0];
-//     await cloudinary.uploader.destroy(publicId);
-
-//     // Delete from database
-//     await documentModel.findByIdAndDelete(id);
-
-//     res.status(200).json({
-//       success: true,
-//       message: "Document deleted successfully",
-//     });
-//   } catch (error) {
-//     console.error('Delete document error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Something went wrong while deleting document",
-//     });
-//   }
-// };
-
-
 const getVersionedFileName = (originalFileName, version) => {
+
   const fileNameParts = originalFileName.split('.');
   const extension = fileNameParts.pop();
   const baseName = fileNameParts.join('.');
@@ -720,6 +363,10 @@ const uploadDocument = async (req, res) => {
     }
 
     // Create document in database
+    const fileExt = pdfFile.originalname?.split('.').pop()?.toLowerCase();
+    const mime = pdfFile.mimetype || '';
+    const fileType = fileExt === 'pdf' ? 'pdf' : (mime.includes('word') || fileExt === 'doc' || fileExt === 'docx') ? 'word' : 'image';
+
     const newDocument = await DocumentModel.create({
       title,
       description,
@@ -728,8 +375,25 @@ const uploadDocument = async (req, res) => {
         url: cloudinaryResponse.secure_url
       },
       fileName: pdfFile.originalname,
+      fileType,
       currentVersion: 0
     });
+
+    // Record history
+    try {
+      await DocumentHistory.create({
+        originalDocument: newDocument._id,
+        action: 'upload',
+        performedBy: req.admin?.adminId || req.admin?.adminEmailId || null,
+        details: { title: newDocument.title, fileName: newDocument.fileName }
+      });
+    } catch (e) { console.warn('Failed to record document history (upload):', e.message); }
+
+    try {
+      await notifyUsersOfNewDocument(newDocument._id, newDocument.title);
+    } catch (e) {
+      console.warn('Failed to notify users of new document:', e.message);
+    }
 
     // Clean up temp file
     if (fs.existsSync(imageTempPath)) {
@@ -870,20 +534,16 @@ const updateDocument = async (req, res) => {
       imageTempPath = pdfFile.path;
       console.log("Temporary file path:", imageTempPath);
 
-      // Delete the existing PDF from Cloudinary if it exists
-      if (existingDocument.pdfUrl && existingDocument.pdfUrl.public_id) {
-        console.log("Deleting existing PDF from Cloudinary...");
-        await cloudinary.uploader.destroy(existingDocument.pdfUrl.public_id, {
-          resource_type: "raw",
-        });
-      }
-
-      console.log("Uploading new PDF to Cloudinary...");
+      console.log("Uploading new file to Cloudinary...");
+      // IMPORTANT: never delete the previous version file.
+      // Upload using a unique public_id so old versions remain downloadable.
+      const versionedPublicId = `${pdfFile.originalname.split(".")[0]}_V${Date.now()}`;
       const cloudinaryResponse = await cloudinary.uploader.upload(imageTempPath, {
         folder: "Documents_Folder",
         resource_type: "raw",
-        public_id: pdfFile.originalname.split(".")[0], // Remove extension for public_id
+        public_id: versionedPublicId,
       });
+
 
       if (!cloudinaryResponse || cloudinaryResponse.error) {
         console.error("Cloudinary upload failed:", cloudinaryResponse.error);
@@ -896,12 +556,17 @@ const updateDocument = async (req, res) => {
         });
       }
 
+      const fileExt = pdfFile.originalname?.split('.').pop()?.toLowerCase();
+      const mime = pdfFile.mimetype || '';
+      const fileType = fileExt === 'pdf' ? 'pdf' : (mime.includes('word') || fileExt === 'doc' || fileExt === 'docx') ? 'word' : 'image';
+
       // Update the document's PDF URL and file name
       updateData.pdfUrl = {
         public_id: cloudinaryResponse.public_id,
         url: cloudinaryResponse.secure_url,
       };
       updateData.fileName = pdfFile.originalname;
+      updateData.fileType = fileType;
       console.log("PDF URL updated:", updateData.pdfUrl);
     }
 
@@ -912,6 +577,16 @@ const updateDocument = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     );
+
+    // Record history for update
+    try {
+      await DocumentHistory.create({
+        originalDocument: updatedDocument._id,
+        action: 'update',
+        performedBy: req.admin?.adminId || req.admin?.adminEmailId || null,
+        details: { before: { title: existingDocument.title, fileName: existingDocument.fileName }, after: { title: updatedDocument.title, fileName: updatedDocument.fileName } }
+      });
+    } catch (e) { console.warn('Failed to record document history (update):', e.message); }
 
     // Clean up the temporary file
     if (imageTempPath && fs.existsSync(imageTempPath)) {
@@ -960,7 +635,18 @@ const createNewVersion = async (req, res, existingDocument) => {
       description: existingDocument.description,
       pdfUrl: existingDocument.pdfUrl,
       fileName: existingDocument.fileName,
+      fileType: existingDocument.fileType || "unknown",
     });
+
+    // Record history for version creation
+    try {
+      await DocumentHistory.create({
+        originalDocument: existingDocument._id,
+        action: 'version',
+        performedBy: req.admin?.adminId || req.admin?.adminEmailId || null,
+        details: { previousVersion, newVersion: existingDocument.currentVersion + 1, previousFileName: existingDocument.fileName }
+      });
+    } catch (e) { console.warn('Failed to record document history (version):', e.message); }
 
     // Increment the version number
     existingDocument.currentVersion += 1;
@@ -982,21 +668,17 @@ const createNewVersion = async (req, res, existingDocument) => {
       // But we keep the original name for the current version
       // This ensures the latest version always has the clean filename
       
-      // Delete the existing PDF from Cloudinary if it exists
-      if (existingDocument.pdfUrl && existingDocument.pdfUrl.public_id) {
-        console.log("Deleting existing PDF from Cloudinary...");
-        await cloudinary.uploader.destroy(existingDocument.pdfUrl.public_id, {
-          resource_type: "raw",
-        });
-      }
+      // IMPORTANT: never delete previous version files.
+      // Upload a unique public_id so older versions remain downloadable.
+      const versionedPublicId = `${pdfFile.originalname.split(".")[0]}_V${Date.now()}`;
 
-      console.log("Uploading new PDF to Cloudinary...");
-      // Upload with the original file name for the current version (no version suffix)
+      console.log("Uploading new file to Cloudinary...");
       const cloudinaryResponse = await cloudinary.uploader.upload(imageTempPath, {
         folder: "Documents_Folder",
         resource_type: "raw",
-        public_id: pdfFile.originalname.split(".")[0], // Remove extension for public_id
+        public_id: versionedPublicId,
       });
+
 
       if (!cloudinaryResponse || cloudinaryResponse.error) {
         console.error("Cloudinary upload failed:", cloudinaryResponse.error);
@@ -1009,12 +691,17 @@ const createNewVersion = async (req, res, existingDocument) => {
         });
       }
 
+      const fileExt = pdfFile.originalname?.split('.').pop()?.toLowerCase();
+      const mime = pdfFile.mimetype || '';
+      const fileType = fileExt === 'pdf' ? 'pdf' : (mime.includes('word') || fileExt === 'doc' || fileExt === 'docx') ? 'word' : 'image';
+
       // Update the document's PDF URL and file name
       updateData.pdfUrl = {
         public_id: cloudinaryResponse.public_id,
         url: cloudinaryResponse.secure_url,
       };
       updateData.fileName = pdfFile.originalname; // Keep the original name for current version
+      updateData.fileType = fileType;
       console.log("PDF URL updated:", updateData.pdfUrl);
       
       // Update the previous version's file name in DocumentVersionModel to include version number
@@ -1112,6 +799,18 @@ const getDocumentVersions = async (req, res) => {
   }
 };
 
+// Get history for a document
+const getDocumentHistory = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const history = await DocumentHistory.find({ originalDocument: id }).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, history });
+  } catch (error) {
+    console.error('Get document history error:', error);
+    res.status(500).json({ success: false, message: 'Something went wrong while fetching document history' });
+  }
+};
+
 const deleteDocument = async (req, res) => {
   const { id } = req.params;
 
@@ -1149,6 +848,15 @@ const deleteDocument = async (req, res) => {
     // Delete the main document from database
     await DocumentModel.findByIdAndDelete(id);
 
+    // Record delete history
+    try {
+      await DocumentHistory.create({
+        originalDocument: document._id,
+        action: 'delete',
+        performedBy: req.admin?.adminId || req.admin?.adminEmailId || null,
+        details: { title: document.title, fileName: document.fileName }
+      });
+    } catch (e) { console.warn('Failed to record document history (delete):', e.message); }
     res.status(200).json({
       success: true,
       message: "Document and all its versions deleted successfully",
@@ -1333,174 +1041,63 @@ const changePassword = async (req, res) => {
 const sendForgotPasswordCode = async (req, res) => {
   const { adminEmailId } = req.body;
   try {
-    const { error } = sendForgotPasswordCodeForAdminSchema.validate({
-      adminEmailId,
-    });
+    const { error } = forgotPasswordQuestionSchema.validate({ adminEmailId });
     if (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.details[0].message,
-      });
+      return res.status(400).json({ success: false, message: error.details[0].message });
     }
 
-    const existingAdmin = await adminModel.findOne({ adminEmailId });
+    const existingAdmin = await adminModel.findOne({ adminEmailId: adminEmailId?.trim().toLowerCase() });
     if (!existingAdmin) {
-      return res.status(404).json({
-        success: false,
-        message: "Admin does not exist!",
-      });
+      return res.status(404).json({ success: false, message: "Admin does not exist!" });
     }
 
-    // Configure the authenticator to generate a 6-digit OTP
-    authenticator.options = { digits: 6 };
-
-    function generateOTP(secret) {
-      return authenticator.generate(secret);
-    }
-
-    // You can use a unique secret per user or session
-    const secret = authenticator.generateSecret();
-    const codeValue = generateOTP(secret); // Example output: "749302"
-
-    let info = await transport.sendMail({
-      from: process.env.NODEMAILER_SENDING_EMAIL_ADDRESS,
-      to: existingAdmin.adminEmailId,
-      subject: "Psycortex: Password Reset Code",
-      html: `
-    <div style="font-family: Arial, sans-serif; color: #333;">
-      <div style="max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 8px; background-color: #1c1c1c; color: #f4f4f4;">
-        <h2 style="color: #00ccff; text-align: center;">Psycortex</h2>
-        <h3 style="text-align: center;">Password Reset Request</h3>
-        <p>Hello ${existingAdmin.adminName},</p>
-        <p>We received a request to reset your password. Please use the following verification code to proceed with the reset:</p>
-        
-        <div style="text-align: center; margin: 20px;">
-          <span style="font-size: 24px; font-weight: bold; color: #ff6600;">${codeValue}</span>
-        </div>
-
-        <p>If you did not request a password reset, please disregard this message. Your account remains secure.</p>
-
-        <div style="border-top: 1px solid #eaeaea; margin-top: 20px; padding-top: 10px;">
-          <p style="font-size: 12px; text-align: center; color: #999;">
-            &copy; ${new Date().getFullYear()} Psycortex. All rights reserved.
-          </p>
-        </div>
-      </div>
-    </div>
-  `,
-    });
-
-    if (info.accepted.includes(existingAdmin.adminEmailId)) {
-      const hashedCodeValue = hmacProcess(
-        codeValue,
-        process.env.HMAC_VERIFICATION_CODE_SECRET
-      );
-      existingAdmin.forgotPasswordCode = hashedCodeValue;
-      existingAdmin.forgotPasswordCodeValidation = Date.now();
+    const securityQuestionToReturn = getAdminSecurityQuestion(existingAdmin);
+    if (!existingAdmin.securityQuestion?.trim()) {
+      existingAdmin.securityQuestion = securityQuestionToReturn;
       await existingAdmin.save();
-
-      return res.status(200).json({
-        success: true,
-        message: "Code sent successfully!",
-      });
     }
 
-    res.status(500).json({
-      success: false,
-      message: "Failed to send code!",
+    return res.status(200).json({
+      success: true,
+      securityQuestion: securityQuestionToReturn,
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Error sending forgot password code!",
-    });
+    res.status(500).json({ success: false, message: "Error fetching security question." });
   }
 };
 
 const verifyForgotPasswordCode = async (req, res) => {
-  const { adminEmailId, providedCode, newPassword } = req.body;
+  const { adminEmailId, securityAnswer, newPassword } = req.body;
 
   try {
-    // Validate the input using schema
-    const { error } = acceptFPCodeForAdminSchema.validate({
-      adminEmailId,
-      providedCode,
-      newPassword,
-    });
+    const { error } = resetPasswordWithSecurityAnswerSchema.validate({ adminEmailId, securityAnswer, newPassword });
     if (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.details[0].message,
-      });
+      return res.status(400).json({ success: false, message: error.details[0].message });
     }
 
-    // Find admin by email
     const existingAdmin = await adminModel
-      .findOne({ adminEmailId })
-      .select("+forgotPasswordCode +forgotPasswordCodeValidation");
+      .findOne({ adminEmailId: adminEmailId?.trim().toLowerCase() })
+      .select("+securityAnswerHash +adminPassword");
 
     if (!existingAdmin) {
-      return res.status(404).json({
-        success: false,
-        message: "Admin does not exist!",
-      });
+      return res.status(404).json({ success: false, message: "Admin does not exist!" });
     }
 
-    if (
-      !existingAdmin.forgotPasswordCode ||
-      !existingAdmin.forgotPasswordCodeValidation
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired code!",
-      });
+    const normalizedAnswer = normalizeSecurityAnswer(securityAnswer);
+    const isAnswerCorrect = await comparePassword(normalizedAnswer, existingAdmin.securityAnswerHash);
+    if (!isAnswerCorrect) {
+      return res.status(400).json({ success: false, message: "Incorrect security answer." });
     }
 
-    // Check if the code has expired (valid for 5 minutes)
-    if (
-      Date.now() - existingAdmin.forgotPasswordCodeValidation >
-      5 * 60 * 1000
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Code has expired!",
-      });
-    }
+    const hashedPassword = await hashPassword(newPassword, 12);
+    existingAdmin.adminPassword = hashedPassword;
+    await existingAdmin.save();
 
-    // Hash the provided code and compare it with the stored hashed code
-    const hashedCodeValue = hmacProcess(
-      providedCode,
-      process.env.HMAC_VERIFICATION_CODE_SECRET
-    );
-    if (hashedCodeValue === existingAdmin.forgotPasswordCode) {
-      // Hash the new password
-      const hashedPassword = await hashPassword(newPassword, 12);
-
-      // Update the password and clear forgot password fields
-      existingAdmin.adminPassword = hashedPassword;
-      existingAdmin.forgotPasswordCode = undefined;
-      existingAdmin.forgotPasswordCodeValidation = undefined;
-
-      // Save the updated admin
-      await existingAdmin.save();
-
-      return res.status(200).json({
-        success: true,
-        message: "Password updated successfully!",
-      });
-    }
-
-    return res.status(400).json({
-      success: false,
-      message: "Invalid code provided!",
-    });
+    return res.status(200).json({ success: true, message: "Password updated successfully!" });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({
-      success: false,
-      message: "Error verifying forgot password code!",
-    });
+    return res.status(500).json({ success: false, message: "Error resetting password." });
   }
 };
 
@@ -1517,7 +1114,9 @@ export {
   getDocumentVersions,
   handleDuplicateDocument,
   updateDocument,
-createNewVersion,
+  createNewVersion,
+
+  getDocumentHistory,
 
   sendVerificationCode,
   verifyVerificationCode,

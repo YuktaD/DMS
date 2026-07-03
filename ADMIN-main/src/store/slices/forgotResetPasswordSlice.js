@@ -9,8 +9,9 @@ const forgotResetPassSlice = createSlice({
     loading: false,
     error: null,
     message: null,
-    codeSent: false,
-    codeVerified: false,
+    questionFetched: false,
+    securityQuestion: null,
+    passwordResetDone: false,
   },
   reducers: {
     requestStart(state) {
@@ -26,62 +27,62 @@ const forgotResetPassSlice = createSlice({
       state.loading = false;
       state.error = action.payload;
     },
-    setCodeSent(state) {
-      state.codeSent = true;
+    setQuestionFetched(state, action) {
+      state.questionFetched = true;
+      state.securityQuestion = action.payload || null;
     },
-    setCodeVerified(state) {
-      state.codeVerified = true;
+    setPasswordResetDone(state) {
+      state.passwordResetDone = true;
     },
     clearAll(state) {
       state.error = null;
       state.message = null;
-      state.codeSent = false;
-      state.codeVerified = false;
+      state.questionFetched = false;
+      state.securityQuestion = null;
+      state.passwordResetDone = false;
       state.loading = false;
     },
   },
 });
 
-const { requestStart, requestSuccess, requestFail, setCodeSent, setCodeVerified } = forgotResetPassSlice.actions;
+const { requestStart, requestSuccess, requestFail, setQuestionFetched, setPasswordResetDone } = forgotResetPassSlice.actions;
 
-// Step 1 — Send OTP to admin email
-export const sendForgotPasswordOTP = (adminEmailId) => async (dispatch) => {
+export const fetchForgotPasswordQuestion = (adminEmailId) => async (dispatch) => {
   try {
     dispatch(requestStart());
     const { data } = await axios.patch(
-      `${BASE_URL}/api/admin/send-forgot-password-code`,
+      `${BASE_URL}/api/admin/forgot-password`,
       { adminEmailId },
       { withCredentials: true }
     );
     if (data.success) {
-      dispatch(requestSuccess(data.message || "OTP sent to your email!"));
-      dispatch(setCodeSent());
+      dispatch(requestSuccess(data.message || "Security question loaded."));
+      dispatch(setQuestionFetched(data.securityQuestion));
     } else {
-      dispatch(requestFail(data.message || "Failed to send OTP"));
+      dispatch(requestFail(data.message || "Failed to fetch security question"));
     }
   } catch (err) {
-    dispatch(requestFail(err.response?.data?.message || "Failed to send OTP. Check your email."));
+    dispatch(requestFail(err.response?.data?.message || "Failed to fetch security question."));
   }
 };
 
-// Step 2 — Verify OTP & reset password
-export const verifyOTPAndResetPassword =
-  (adminEmailId, providedCode, newPassword) => async (dispatch) => {
+export const resetPasswordWithSecurityAnswer =
+  (adminEmailId, securityAnswer, newPassword) => async (dispatch) => {
     try {
       dispatch(requestStart());
       const { data } = await axios.patch(
-        `${BASE_URL}/api/admin/verify-forgot-password-code`,
-        { adminEmailId, providedCode, newPassword },
+        `${BASE_URL}/api/admin/reset-password`,
+        { adminEmailId, securityAnswer, newPassword },
         { withCredentials: true }
       );
       if (data.success) {
         dispatch(requestSuccess(data.message || "Password reset successfully!"));
-        dispatch(setCodeVerified());
+        dispatch(setPasswordResetDone());
       } else {
-        dispatch(requestFail(data.message || "Invalid OTP"));
+        dispatch(requestFail(data.message || "Invalid answer or password."));
       }
     } catch (err) {
-      dispatch(requestFail(err.response?.data?.message || "Invalid OTP or expired. Try again."));
+      dispatch(requestFail(err.response?.data?.message || "Invalid security answer. Try again."));
     }
   };
 

@@ -11,6 +11,7 @@ const documentSchema = new mongoose.Schema({
   category: { type: String, default: "General", trim: true },
   tags: [{ type: String, trim: true }],
   currentVersion: { type: Number, default: 0 },
+  fileType: { type: String, default: "unknown" },
   createdAt: { type: Date, default: Date.now }
 });
 

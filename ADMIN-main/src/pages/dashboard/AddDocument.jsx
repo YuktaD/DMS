@@ -33,9 +33,24 @@ export function AddDocument() {
 
   const processFile = (file) => {
     if (!file) return;
-    if (!file.type.includes('pdf')) { toast.error('Please select a PDF file'); return; }
+
+    const allowedTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ];
+
+    const isAllowed = allowedTypes.includes(file.type) || /\.(pdf|jpg|jpeg|doc|docx)$/i.test(file.name);
+    if (!isAllowed) {
+      toast.error('Please select a PDF, JPG, JPEG, DOC, or DOCX file');
+      return;
+    }
+
     if (file.size > 10 * 1024 * 1024) { toast.error('File size must be less than 10MB'); return; }
-    const nameNoExt = file.name.replace(/\.pdf$/i, '');
+
+    const nameNoExt = file.name.replace(/\.(pdf|jpg|jpeg|doc|docx)$/i, '');
     setFileName(file.name);
     setFormData(p => ({ ...p, pdfFile: file, title: p.title || nameNoExt }));
   };
@@ -49,7 +64,7 @@ export function AddDocument() {
 
   const handleSubmit = e => {
     e.preventDefault();
-    if (!formData.pdfFile) { toast.error('Please select a PDF file'); return; }
+    if (!formData.pdfFile) { toast.error('Please select a supported file'); return; }
     const fd = new FormData();
     fd.append('title', formData.title);
     fd.append('description', formData.description);
@@ -114,7 +129,7 @@ export function AddDocument() {
                   transition: 'all 0.2s',
                   marginBottom: 24,
                 }}>
-                <input ref={fileRef} type="file" id="pdfFile" accept=".pdf" onChange={handleFileChange} style={{ display: 'none' }} />
+                <input ref={fileRef} type="file" id="pdfFile" accept=".pdf,.jpg,.jpeg,.doc,.docx" onChange={handleFileChange} style={{ display: 'none' }} />
                 {formData.pdfFile ? (
                   <>
                     <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
@@ -131,7 +146,7 @@ export function AddDocument() {
                       <Upload size={26} color="#6366f1" />
                     </div>
                     <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.95rem', marginBottom: 6 }}>
-                      {dragOver ? 'Drop your PDF here!' : 'Drag & drop PDF here'}
+                      {dragOver ? 'Drop your file here!' : 'Drag & drop a file here'}
                     </div>
                     <div style={{ fontSize: '0.82rem', color: '#94a3b8' }}>or <span style={{ color: '#6366f1', fontWeight: 600 }}>browse files</span> · Max 10MB</div>
                   </>

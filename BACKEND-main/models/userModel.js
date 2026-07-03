@@ -12,8 +12,9 @@ const userSchema = new mongoose.Schema({
     isRead: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
   }],
-  resetPasswordOTP: { type: String, select: false },
-  resetPasswordOTPExpiry: { type: Date, select: false },
+  securityQuestion: { type: String, required: true, trim: true },
+  securityAnswerHash: { type: String, required: true, select: false },
+  passwordResetAuthorizedExpiry: { type: Date, select: false },
 }, { timestamps: true });
 
 export default mongoose.models.User || mongoose.model("User", userSchema);

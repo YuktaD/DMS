@@ -41,20 +41,19 @@ const adminSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    verificationCode: {
+    securityQuestion: {
       type: String,
-      select: false,
+      required: [true, 'Security question is required'],
+      trim: true,
+      default: "What is your favorite food?",
     },
-    verificationCodeValidation: {
-      type: Number,
-      select: false,
-    },
-    forgotPasswordCode: {
+    securityAnswerHash: {
       type: String,
+      required: [true, 'Security answer is required'],
       select: false,
     },
-    forgotPasswordCodeValidation: {
-      type: Number,
+    passwordResetAuthorizedExpiry: {
+      type: Date,
       select: false,
     },
   },

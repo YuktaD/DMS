@@ -5,9 +5,23 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { registerDoctor } from '../../store/slices/doctorSlice';
 
+const SECURITY_QUESTIONS = [
+  "What is your mother's maiden name?",
+  "What was the name of your first school?",
+  "What is your favorite book?",
+  "What is the name of your childhood best friend?",
+  "What city were you born in?",
+  "What is your favorite teacher's name?",
+  "What was the name of your first pet?",
+  "What is your favorite movie?",
+  "What is your dream job?",
+  "What is your favorite food?",
+];
+
 export function SignUp() {
   const [formData, setFormData] = useState({
     adminName: '', adminEmailId: '', password: '', confirmPassword: '',
+    securityQuestion: '', securityAnswer: '',
     adminMobileNo: '', termsAccepted: false, profileImage: null
   });
   const [showPass, setShowPass] = useState(false);
@@ -39,7 +53,9 @@ export function SignUp() {
   if (
     !formData.adminName ||
     !formData.adminEmailId ||
-    !formData.password
+    !formData.password ||
+    !formData.securityQuestion ||
+    !formData.securityAnswer
   ) {
     toast.error("Please fill all required fields");
     return;
@@ -62,6 +78,8 @@ export function SignUp() {
 
   // Backend expects adminPassword
   fd.append("adminPassword", formData.password);
+  fd.append("securityQuestion", formData.securityQuestion);
+  fd.append("securityAnswer", formData.securityAnswer);
 
   fd.append("confirmPassword", formData.confirmPassword);
   fd.append("adminMobileNo", formData.adminMobileNo);
@@ -157,6 +175,44 @@ export function SignUp() {
 
             <label style={S.label}>Email Address *</label>
             <input name="adminEmailId" type="email" placeholder="admin@company.com" value={formData.adminEmailId} onChange={handleChange} style={S.input} onFocus={focus} onBlur={blur} />
+
+            <label style={S.label}>Security Question *</label>
+            <select
+              name="securityQuestion"
+              value={formData.securityQuestion}
+              onChange={handleChange}
+              onFocus={focus}
+              onBlur={blur}
+              style={{
+                ...S.input,
+                cursor: "pointer",
+                backgroundColor: "#0f172a",
+                color: "#f8fafc",
+                colorScheme: "dark",
+                appearance: "none",
+                paddingRight: 40,
+                backgroundImage: "linear-gradient(45deg, transparent 50%, #818cf8 50%), linear-gradient(135deg, #818cf8 50%, transparent 50%)",
+                backgroundPosition: "calc(100% - 18px) calc(1em + 2px), calc(100% - 12px) calc(1em + 2px)",
+                backgroundSize: "6px 6px, 6px 6px",
+                backgroundRepeat: "no-repeat"
+              }}
+            >
+              <option value="" style={{ backgroundColor: "#0f172a", color: "#f8fafc" }}>
+                Select a question
+              </option>
+
+              {SECURITY_QUESTIONS.map((question) => (
+                <option key={question} value={question} style={{ backgroundColor: "#0f172a", color: "#f8fafc" }}>
+                  {question}
+                </option>
+              ))}
+            </select>
+
+            <label style={S.label}>Security Answer *</label>
+            <input name="securityAnswer" type="password" placeholder="Your answer" value={formData.securityAnswer} onChange={handleChange} style={S.input} onFocus={focus} onBlur={blur} />
+            <p style={{ margin: '-6px 0 14px', color: 'rgba(255,255,255,0.35)', fontSize: '0.74rem' }}>
+              This recovery question helps reset the admin password later.
+            </p>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
               <div>

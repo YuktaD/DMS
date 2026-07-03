@@ -12,7 +12,10 @@ const HomePage = () => {
   const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem("userData")); } catch { return null; } });
   const [token, setToken] = useState(() => localStorage.getItem("userToken") || null);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("darkMode") !== "false");
-  const [selectedPdf, setSelectedPdf] = useState(null);
+  const [selectedFileUrl, setSelectedFileUrl] = useState(null);
+  const [selectedFileType, setSelectedFileType] = useState("pdf");
+  const [selectedFileName, setSelectedFileName] = useState("");
+  const [selectedDocVersion, setSelectedDocVersion] = useState(null);
   const [numPages, setNumPages] = useState(null);
   const [isPurchased, setIsPurchased] = useState(false);
   const [openPurchase, setOpenPurchase] = useState(false);
@@ -28,7 +31,33 @@ const HomePage = () => {
 
   const handleAuthSuccess = (userData, userToken) => { setUser(userData); setToken(userToken); };
   const handleLogout = () => { localStorage.removeItem("userToken"); localStorage.removeItem("userData"); setUser(null); setToken(null); };
-  const handleViewPdf = (url) => { setSelectedPdf(url); setIsPurchased(false); setNumPages(null); setLoadError(null); };
+  const detectFileTypeFromUrl = (url) => {
+    const u = (typeof url === "string" ? url : "").toLowerCase();
+    if (!u) return "unknown";
+    if (u.includes("/raw") || u.startsWith("data:")) {
+      // Cloudinary raw URLs can still end with extension; fall through to extension checks
+    }
+    if (u.match(/\.(png|jpe?g|gif|webp|bmp)(\?|#|$)/i)) return "image";
+    if (u.match(/\.(pdf)(\?|#|$)/i)) return "pdf";
+    if (u.match(/\.(doc|docx)(\?|#|$)/i)) return "word";
+
+    // Fallback: if it ends with common Word/PDF without extension in URL, treat as unknown
+    return "unknown";
+  };
+
+  const handleViewPdf = (url, meta = {}) => {
+    const safeUrl = typeof url === "string" ? url : "";
+    const type = detectFileTypeFromUrl(safeUrl);
+
+    setSelectedFileUrl(safeUrl);
+    setSelectedFileType(type);
+    setSelectedFileName(meta.fileName || "");
+    setSelectedDocVersion(meta.version ?? null);
+
+    setIsPurchased(false);
+    setNumPages(null);
+    setLoadError(null);
+  };
 
   // Dark theme colors
   const bg = darkMode ? "#080d1a" : "#f8fafc";
@@ -125,37 +154,72 @@ const HomePage = () => {
         <UserDocuments onViewPdf={handleViewPdf} token={token} darkMode={darkMode} />
       </div>
 
-      {/* PDF Viewer Modal */}
-      {selectedPdf && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(8px)" }} onClick={() => setSelectedPdf(null)}>
+      {/* Document Preview Modal */}
+      {selectedFileUrl && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(8px)" }} onClick={() => { setSelectedFileUrl(null); setSelectedFileName(""); setSelectedDocVersion(null); setIsPurchased(false); }}>
           <div style={{ background: darkMode ? "#0f1629" : "white", borderRadius: 20, width: "100%", maxWidth: 860, maxHeight: "90vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 40px 100px rgba(0,0,0,0.6)", border: `1px solid ${cardBorder}` }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "16px 24px", background: "linear-gradient(135deg, #080d1a, #1e3a5f)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ color: "white", fontWeight: 700 }}>📄 Document Preview</span>
-              <button onClick={() => setSelectedPdf(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "white", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16 }}>✕</button>
+              <div>
+                <span style={{ color: "white", fontWeight: 700 }}>📄 Document Preview</span>
+                {(selectedFileName || selectedDocVersion !== null) && (
+                  <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 700, marginTop: 2 }}>
+                    {selectedFileName ? selectedFileName : ""}{selectedDocVersion !== null ? ` • Version ${selectedDocVersion}` : ""}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setSelectedFileUrl(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "white", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16 }}>✕</button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", background: darkMode ? "#0a0f1e" : "#f1f5f9" }}>
               {loadError && <div style={{ background: "#fef2f2", color: "#dc2626", padding: 16, margin: 16, borderRadius: 10 }}>{loadError}</div>}
-              <Document file={selectedPdf} onLoadSuccess={({ numPages }) => { setNumPages(numPages); setLoadError(null); }} onLoadError={() => setLoadError("Failed to load PDF.")}
-                loading={<div style={{ textAlign: "center", padding: 40 }}><div style={{ width: 32, height: 32, border: "3px solid #6366f1", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} /><p style={{ color: "#64748b" }}>Loading...</p></div>}>
-                {numPages && Array.from({ length: numPages }, (_, i) => i + 1).map(pageNum => (
-                  pageNum <= 2 || isPurchased ? (
-                    <div key={pageNum} style={{ margin: "16px auto", width: "fit-content", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,0.2)" }}>
-                      <Page pageNumber={pageNum} width={Math.min(780, window.innerWidth - 80)} renderTextLayer={false} renderAnnotationLayer={false} />
-                    </div>
-                  ) : (
-                    <div key={pageNum} style={{ margin: "16px auto", width: Math.min(780, window.innerWidth - 80), height: 560, background: darkMode ? "rgba(255,255,255,0.03)" : "#f1f5f9", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${cardBorder}` }}>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 52, marginBottom: 12 }}>🔒</div>
-                        <h3 style={{ color: textMain, margin: "0 0 8px", fontWeight: 800 }}>Page {pageNum} — Locked</h3>
-                        <p style={{ color: textSub, marginBottom: 20, fontSize: "0.9rem" }}>Purchase to unlock full access.</p>
-                        <button onClick={() => setOpenPurchase(true)} style={{ padding: "12px 28px", border: "none", borderRadius: 99, background: "linear-gradient(90deg, #6366f1, #8b5cf6)", color: "white", fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 20px rgba(99,102,241,0.45)", fontFamily: "inherit" }}>
-                          Purchase — $9.99
-                        </button>
+
+              {selectedFileType === "pdf" ? (
+                <Document
+                  file={selectedFileUrl}
+                  onLoadSuccess={({ numPages }) => { setNumPages(numPages); setLoadError(null); }}
+                  onLoadError={() => setLoadError("Failed to load PDF.")}
+                  loading={<div style={{ textAlign: "center", padding: 40 }}><div style={{ width: 32, height: 32, border: "3px solid #6366f1", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} /><p style={{ color: "#64748b" }}>Loading...</p></div>}
+                >
+                  {numPages && Array.from({ length: numPages }, (_, i) => i + 1).map(pageNum => (
+                    pageNum <= 2 || isPurchased ? (
+                      <div key={pageNum} style={{ margin: "16px auto", width: "fit-content", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,0.2)" }}>
+                        <Page pageNumber={pageNum} width={Math.min(780, window.innerWidth - 80)} renderTextLayer={false} renderAnnotationLayer={false} />
                       </div>
-                    </div>
-                  )
-                ))}
-              </Document>
+                    ) : (
+                      <div key={pageNum} style={{ margin: "16px auto", width: Math.min(780, window.innerWidth - 80), height: 560, background: darkMode ? "rgba(255,255,255,0.03)" : "#f1f5f9", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${cardBorder}` }}>
+                        <div style={{ textAlign: "center" }}>
+                          <div style={{ fontSize: 52, marginBottom: 12 }}>🔒</div>
+                          <h3 style={{ color: textMain, margin: "0 0 8px", fontWeight: 800 }}>Page {pageNum} — Locked</h3>
+                          <p style={{ color: textSub, marginBottom: 20, fontSize: "0.9rem" }}>Purchase to unlock full access.</p>
+                          <button onClick={() => setOpenPurchase(true)} style={{ padding: "12px 28px", border: "none", borderRadius: 99, background: "linear-gradient(90deg, #6366f1, #8b5cf6)", color: "white", fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 20px rgba(99,102,241,0.45)", fontFamily: "inherit" }}>
+                            Purchase — $9.99
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  ))}
+                </Document>
+              ) : selectedFileType === "image" ? (
+                <div style={{ padding: 20, display: "flex", justifyContent: "center", alignItems: "center" }}>
+                  <img
+                    src={selectedFileUrl}
+                    alt="Document preview"
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 12 }}
+                    onError={() => setLoadError("Failed to load image preview.")}
+                  />
+                </div>
+              ) : selectedFileType === "word" ? (
+                <iframe
+                  title="Word preview"
+                  style={{ width: "100%", height: "100%", border: "none", background: "#f5f5f5" }}
+                  src={`https://docs.google.com/gview?url=${encodeURIComponent(selectedFileUrl)}&embedded=true`}
+                />
+              ) : (
+                <div style={{ padding: 24, textAlign: "center" }}>
+                  <div style={{ fontSize: 44, marginBottom: 10 }}>📄</div>
+                  <div style={{ fontWeight: 800, color: textMain }}>Preview not available</div>
+                  <div style={{ color: textSub, marginTop: 6 }}>Download the file to view it.</div>
+                </div>
+              )}
             </div>
           </div>
         </div>

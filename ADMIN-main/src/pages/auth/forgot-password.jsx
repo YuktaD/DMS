@@ -4,44 +4,43 @@ import { useDispatch, useSelector } from 'react-redux';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import {
-  sendForgotPasswordOTP,
-  verifyOTPAndResetPassword,
+  fetchForgotPasswordQuestion,
+  resetPasswordWithSecurityAnswer,
   clearAllForgotResetPassErrors,
 } from '../../store/slices/forgotResetPasswordSlice';
 
 const ForgotPassword = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { loading, error, message, codeSent, codeVerified } = useSelector(
+  const { loading, error, message, questionFetched, securityQuestion, passwordResetDone } = useSelector(
     (s) => s.forgotPassword
   );
 
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [securityAnswer, setSecurityAnswer] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const otpRefs = useRef([]);
 
   // Move to step 2 when OTP is sent successfully
   useEffect(() => {
-    if (codeSent && step === 1) {
+    if (questionFetched && step === 1) {
       setStep(2);
-      toast.success('OTP sent! Check your email.');
+      toast.success('Security question loaded. Answer it to reset your password.');
     }
-  }, [codeSent]);
+  }, [questionFetched, step]);
 
   // Redirect to login when password reset done
   useEffect(() => {
-    if (codeVerified) {
+    if (passwordResetDone) {
       toast.success('Password reset successfully! Please sign in.');
       setTimeout(() => {
         dispatch(clearAllForgotResetPassErrors());
         navigate('/auth/sign-in');
       }, 1800);
     }
-  }, [codeVerified]);
+  }, [passwordResetDone]);
 
   // Show errors
   useEffect(() => {
@@ -51,33 +50,18 @@ const ForgotPassword = () => {
     }
   }, [error]);
 
-  const handleOtpChange = (i, val) => {
-    if (!/^\d?$/.test(val)) return;
-    const next = [...otp];
-    next[i] = val;
-    setOtp(next);
-    if (val && i < 5) otpRefs.current[i + 1]?.focus();
-  };
-
-  const handleOtpKey = (i, e) => {
-    if (e.key === 'Backspace' && !otp[i] && i > 0) {
-      otpRefs.current[i - 1]?.focus();
-    }
-  };
-
-  const handleSendOTP = (e) => {
+  const handleSendSecurityQuestion = (e) => {
     e.preventDefault();
     if (!email.trim()) { toast.error('Please enter your email'); return; }
-    dispatch(sendForgotPasswordOTP(email.trim()));
+    dispatch(fetchForgotPasswordQuestion(email.trim()));
   };
 
   const handleResetPassword = (e) => {
     e.preventDefault();
-    const code = otp.join('');
-    if (code.length < 6) { toast.error('Please enter the complete 6-digit OTP'); return; }
+    if (!securityAnswer.trim()) { toast.error('Please enter your security answer'); return; }
     if (!newPass || newPass.length < 6) { toast.error('Password must be at least 6 characters'); return; }
     if (newPass !== confirmPass) { toast.error('Passwords do not match'); return; }
-    dispatch(verifyOTPAndResetPassword(email.trim(), code, newPass));
+    dispatch(resetPasswordWithSecurityAnswer(email.trim(), securityAnswer.trim(), newPass));
   };
 
   const S = {
@@ -125,14 +109,14 @@ const ForgotPassword = () => {
             </span>
           </h2>
           <p style={{ color: 'rgba(255,255,255,0.4)', lineHeight: 1.75, fontSize: '0.9rem', marginBottom: 36 }}>
-            Enter your email and we'll send a 6-digit OTP. Use it to set a new password instantly.
+            Enter your email and answer your saved security question to reset your password instantly.
           </p>
 
           {/* Step indicators */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0 }}>
             {[
               { n: 1, label: 'Enter Email' },
-              { n: 2, label: 'Verify OTP' },
+              { n: 2, label: 'Verify Answer' },
               { n: 3, label: 'Done ✓' },
             ].map((s, i, arr) => (
               <React.Fragment key={s.n}>
@@ -172,7 +156,7 @@ const ForgotPassword = () => {
                 <p style={{ color: 'rgba(255,255,255,0.38)', margin: 0, fontSize: '0.88rem' }}>Enter the email linked to your admin account</p>
               </div>
 
-              <form onSubmit={handleSendOTP}>
+              <form onSubmit={handleSendSecurityQuestion}>
                 <label style={S.label}>Email Address</label>
                 <input
                   type="email"
@@ -185,53 +169,39 @@ const ForgotPassword = () => {
                 />
 
                 <button type="submit" disabled={loading} style={S.primaryBtn(loading)}>
-                  {loading ? '📨 Sending OTP...' : 'Send OTP →'}
+                  {loading ? '🔎 Fetching question...' : 'Fetch Security Question →'}
                 </button>
               </form>
             </>
           )}
 
-          {/* ─── STEP 2 : OTP + New Password ─── */}
+          {/* ─── STEP 2 : Security Answer + New Password ─── */}
           {step === 2 && (
             <>
               <div style={{ marginBottom: 26 }}>
                 <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#10b981', letterSpacing: '0.12em', marginBottom: 8 }}>STEP 2 OF 2</div>
-                <h2 style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white', margin: '0 0 6px', letterSpacing: '-0.5px' }}>Set New Password</h2>
+                <h2 style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white', margin: '0 0 6px', letterSpacing: '-0.5px' }}>Answer Your Recovery Question</h2>
                 <p style={{ color: 'rgba(255,255,255,0.38)', margin: 0, fontSize: '0.88rem' }}>
-                  OTP sent to <span style={{ color: '#818cf8', fontWeight: 600 }}>{email}</span>
+                  Answer the security question for <span style={{ color: '#818cf8', fontWeight: 600 }}>{email}</span>
                 </p>
               </div>
 
-              {/* Green success notice */}
-              <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 10, padding: '10px 14px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 18 }}>📧</span>
-                <span style={{ color: '#6ee7b7', fontSize: '0.84rem' }}>Check your inbox and enter the 6-digit code below.</span>
-              </div>
-
               <form onSubmit={handleResetPassword}>
-                {/* OTP boxes */}
-                <label style={S.label}>6-Digit OTP</label>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-                  {otp.map((digit, i) => (
-                    <input
-                      key={i}
-                      ref={(el) => (otpRefs.current[i] = el)}
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={1}
-                      value={digit}
-                      onChange={(e) => handleOtpChange(i, e.target.value)}
-                      onKeyDown={(e) => handleOtpKey(i, e)}
-                      style={{
-                        flex: 1, height: 54, textAlign: 'center', fontSize: '1.5rem', fontWeight: 800,
-                        border: `2px solid ${digit ? '#6366f1' : 'rgba(255,255,255,0.12)'}`,
-                        borderRadius: 12,
-                        background: digit ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.04)',
-                        color: 'white', outline: 'none', transition: 'all 0.2s', fontFamily: 'inherit',
-                      }}
-                    />
-                  ))}
+                <label style={S.label}>Security Question</label>
+                <div style={{ ...S.input, minHeight: 58, display: 'flex', alignItems: 'center', color: 'rgba(255,255,255,0.9)', background: 'rgba(255,255,255,0.03)', border: '1.5px solid rgba(255,255,255,0.1)', marginBottom: 18 }}>
+                  {securityQuestion || 'No question available for this email.'}
                 </div>
+
+                <label style={S.label}>Security Answer</label>
+                <input
+                  type="password"
+                  value={securityAnswer}
+                  onChange={(e) => setSecurityAnswer(e.target.value)}
+                  placeholder="Enter answer"
+                  style={S.input}
+                  onFocus={onFocus} onBlur={onBlur}
+                  required
+                />
 
                 <label style={S.label}>New Password</label>
                 <div style={{ position: 'relative', marginBottom: 18 }}>
@@ -271,19 +241,10 @@ const ForgotPassword = () => {
                   {loading ? '🔄 Resetting...' : '🔒 Reset Password'}
                 </button>
 
-                {/* Resend OTP */}
                 <button
                   type="button"
-                  disabled={loading}
-                  onClick={() => { dispatch(sendForgotPasswordOTP(email)); toast.info('Sending new OTP...'); }}
+                  onClick={() => { setStep(1); setSecurityAnswer(''); setNewPass(''); setConfirmPass(''); dispatch(clearAllForgotResetPassErrors()); }}
                   style={{ width: '100%', marginTop: 10, padding: '10px', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, background: 'transparent', color: 'rgba(255,255,255,0.45)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.85rem' }}>
-                  📨 Resend OTP
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => { setStep(1); setOtp(['','','','','','']); dispatch(clearAllForgotResetPassErrors()); }}
-                  style={{ width: '100%', marginTop: 6, padding: '8px', border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.82rem' }}>
                   ← Change Email
                 </button>
               </form>

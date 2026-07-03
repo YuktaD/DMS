@@ -170,7 +170,7 @@ const UserDocuments = ({ onViewPdf, token, darkMode }) => {
                   </div>
 
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => onViewPdf(doc.pdfUrl?.url)}
+                    <button onClick={() => onViewPdf(doc.pdfUrl?.url, { fileName: doc.fileName || doc.title, version: doc.currentVersion })}
                       style={{ flex: 1, padding: "10px", border: "none", borderRadius: 10, background: `linear-gradient(90deg, ${accent}, ${accent}cc)`, color: "white", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", fontFamily: "inherit", boxShadow: `0 4px 14px ${accent}40` }}>
                       👁️ Preview
                     </button>

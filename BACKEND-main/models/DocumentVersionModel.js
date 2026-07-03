@@ -28,6 +28,7 @@ const documentVersionSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  fileType: { type: String, default: "unknown" },
   createdAt: {
     type: Date,
     default: Date.now

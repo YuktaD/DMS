@@ -15,6 +15,8 @@ import {
   createNewVersion,
   updateDocument,
   handleDuplicateDocument,
+  deleteDocument,
+  getDocumentHistory,
 } from "../controllers/adminController.js";
 // import upload from '../utils/multer.js';
 import { upload } from "../middleware/multer.js";
@@ -34,6 +36,12 @@ adminRouter.post(
   uploadDocument
 );
 
+adminRouter.post(
+  "/upload-document",
+  upload.single("pdfFile"),
+  uploadDocument
+);
+
 adminRouter.get(
   "/getAllDocuments",
   getAllDocuments
@@ -43,6 +51,12 @@ adminRouter.get(
 adminRouter.put(
   "/editDocument/:id",
   upload.single("document"),
+  updateDocument
+);
+
+adminRouter.patch(
+  "/update-document",
+  upload.single("pdfFile"),
   updateDocument
 );
 
@@ -60,9 +74,22 @@ adminRouter.put(
   createNewVersion
 );
 
+adminRouter.patch(
+  "/create-document-version",
+  upload.single("pdfFile"),
+  createNewVersion
+);
+
 adminRouter.get(
   "/documentVersions/:id",
   getDocumentVersions
+);
+
+// Document history
+adminRouter.get(
+  "/document-history/:id",
+  adminIdentifier,
+  getDocumentHistory
 );
 
 //sinding verifiaction code
@@ -81,5 +108,12 @@ adminRouter.patch("/change-password", adminIdentifier, changePassword);
 //for forget password
 adminRouter.patch("/send-forgot-password-code", sendForgotPasswordCode);
 adminRouter.patch("/verify-forgot-password-code", verifyForgotPasswordCode);
+adminRouter.patch("/forgot-password", sendForgotPasswordCode);
+adminRouter.patch("/reset-password", verifyForgotPasswordCode);
+adminRouter.delete(
+  "/deleteDocument/:id",
+  adminIdentifier,
+  deleteDocument
+);
 
 export default adminRouter;

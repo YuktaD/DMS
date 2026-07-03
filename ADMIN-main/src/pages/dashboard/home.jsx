@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Search, FileText, Clock, Upload, Eye, History, Trash2, X, Maximize2, Minimize2, TrendingUp, Users, FolderOpen, Plus } from 'lucide-react';
 import { getAllDocuments } from '../../store/slices/documentSlice';
+import { deleteDocument as deleteAdminDocument } from '../../store/slices/documentSlice2';
 import { getDocumentVersions, createNewVersion, updateDocument, clearErrors, clearMessage } from '../../store/slices/documentVersoningAndReplace';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import axios from 'axios';
+import Swal from "sweetalert2";
 
 const API = 'http://localhost:5000/api';
 
@@ -26,6 +28,7 @@ const StatCard = ({ icon: Icon, label, value, color, sub }) => (
 export function Home() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+
   const { documents, loading } = useSelector((state) => state.document);
   const { loading: versionLoading, error: versionError, message: versionMessage, documentVersions } = useSelector((state) => state.documentVersioning);
 
@@ -43,6 +46,9 @@ export function Home() {
   const [deleting, setDeleting] = useState(false);
   const [editForm, setEditForm] = useState({ title: '', description: '' });
   const [file, setFile] = useState(null);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [historyItems, setHistoryItems] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [stats, setStats] = useState({ totalDocs: 0, totalUsers: 0, categories: [] });
 
   useEffect(() => {
@@ -57,27 +63,67 @@ export function Home() {
 
   const fetchStats = async () => {
     try {
-      const token = document.cookie.split(';').find(c => c.trim().startsWith('AdminAuthorization='))?.split('=')?.[1] || '';
       const { data } = await axios.get(`${API}/documents/stats`, { withCredentials: true });
       if (data.success) setStats(data.stats);
     } catch {}
   };
 
-  const handleDelete = async (id) => {
-    setDeleting(true);
+  const handleDelete = async (docId) => {
     try {
-      const { data } = await axios.delete(`${API}/documents/delete/${id}`, { withCredentials: true });
-      if (data.success) {
-        toast.success('Document deleted successfully');
+      setDeleting(true);
+      const res = await dispatch(deleteAdminDocument(docId));
+
+      if (res?.success) {
+        setDeleteConfirmId(null);
         dispatch(getAllDocuments());
         fetchStats();
-      } else toast.error(data.message);
-    } catch (e) {
-      toast.error(e.response?.data?.message || 'Delete failed');
+        toast.success(res.message || 'Document deleted successfully');
+        Swal.fire({
+          icon: 'success',
+          title: 'Deleted',
+          text: res.message || 'Document deleted successfully',
+          timer: 2000,
+          showConfirmButton: false,
+        });
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'Delete failed',
+          text: res?.message || 'Unable to delete the document',
+        });
+      }
+    } catch (error) {
+      const errorMessage = error?.response?.data?.message || 'Failed to delete document';
+      toast.error(errorMessage);
+      Swal.fire({
+        icon: 'error',
+        title: 'Delete failed',
+        text: errorMessage,
+      });
     } finally {
       setDeleting(false);
-      setDeleteConfirmId(null);
     }
+  };
+
+  const getDocumentUrl = (doc) => {
+    const rawUrl = doc?.pdfUrl?.url || '';
+    if (!rawUrl) return '';
+    if (/^https?:\/\//i.test(rawUrl) || rawUrl.startsWith('data:')) return rawUrl;
+    return `${API.replace('/api', '')}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`;
+  };
+
+  const getViewerType = (doc) => {
+  const fileType = (doc?.fileType || '').toLowerCase();
+    if (fileType === 'image') return 'image';
+    if (fileType === 'pdf') return 'pdf';
+    if (fileType === 'word') return 'word';
+
+    // Fallback for older documents (no fileType stored yet)
+    const fileName = doc?.fileName || doc?.title || '';
+    if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(fileName)) return 'image';
+    if (/\.pdf$/i.test(fileName)) return 'pdf';
+    if (/\.(doc|docx)$/i.test(fileName)) return 'word';
+    return 'unsupported';
   };
 
   const filteredDocuments = documents.filter(doc => {
@@ -97,30 +143,78 @@ export function Home() {
     setVersionsModalOpen(true);
   };
 
-  const handleEdit = (doc) => {
+  const handleHistory = async (doc) => {
     setSelectedDocument(doc);
-    setEditForm({ title: doc.title, description: doc.description });
-    setEditModalOpen(true);
+    setHistoryLoading(true);
+    try {
+      const { data } = await axios.get(`${API}/admin/document-history/${doc._id}`, { withCredentials: true });
+      if (data.success) setHistoryItems(data.history || []);
+      setHistoryModalOpen(true);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to fetch document history');
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
-  const handleUpdateDocument = async () => {
-    if (!editForm.title.trim() || !editForm.description.trim()) { toast.error('Title and description are required'); return; }
-    const fd = new FormData();
-    if (file) fd.append('document', file);
-    fd.append('title', editForm.title);
-    fd.append('description', editForm.description);
-    const res = await dispatch(updateDocument(selectedDocument._id, fd));
-    if (res) { toast.success('Document updated!'); setEditModalOpen(false); setFile(null); dispatch(getAllDocuments()); }
-  };
+ const handleEdit = (doc) => {
+  setSelectedDocument(doc);
+
+  setEditForm({
+    title: doc.title || "",
+    description: doc.description || "",
+  });
+
+  setFile(null); // Purani selected file remove hogi
+  setEditModalOpen(true);
+};
+
+ const handleUpdateDocument = async () => {
+  try {
+    if (!editForm.title.trim() || !editForm.description.trim()) {
+      toast.error("Title and Description are required");
+      return;
+    }
+
+    const formData = new FormData();
+
+    formData.append("title", editForm.title);
+    formData.append("description", editForm.description);
+
+    if (file) {
+      formData.append("document", file);
+    }
+
+    const response = await dispatch(
+      updateDocument(selectedDocument._id, formData)
+    );
+
+    if (response) {
+      toast.success("Document updated successfully");
+
+      setEditModalOpen(false);
+      setFile(null);
+
+      dispatch(getAllDocuments());
+    }
+  } catch (error) {
+    toast.error(error?.response?.data?.message || "Failed to update document");
+  }
+};
 
   const handleCreateVersion = async () => {
-    if (!file) { toast.error('Please select a file'); return; }
+    if (!file) { toast.error('Please select a file to save as a new version'); return; }
     const fd = new FormData();
     fd.append('document', file);
     fd.append('title', editForm.title);
     fd.append('description', editForm.description);
     const res = await dispatch(createNewVersion(selectedDocument._id, fd));
-    if (res) { toast.success('New version created!'); setEditModalOpen(false); setFile(null); }
+    if (res) {
+      toast.success(`Version ${selectedDocument?.currentVersion + 1 || 1} saved successfully`);
+      setEditModalOpen(false);
+      setFile(null);
+      dispatch(getAllDocuments());
+    }
   };
 
   const s = {
@@ -231,6 +325,7 @@ export function Home() {
                         {[
                           { icon: <Eye size={15} />, title: 'View', bg: '#eff6ff', color: '#3b82f6', onClick: () => { setViewingDocument(doc); setViewerOpen(true); } },
                           { icon: <History size={15} />, title: 'Versions', bg: '#f0fdf4', color: '#10b981', onClick: () => handleViewVersions(doc) },
+                          { icon: <Clock size={15} />, title: 'History', bg: '#fff7ed', color: '#f59e0b', onClick: () => handleHistory(doc) },
                           { icon: <Trash2 size={15} />, title: 'Delete', bg: '#fef2f2', color: '#ef4444', onClick: () => setDeleteConfirmId(doc._id) },
                         ].map((btn, bi) => (
                           <button key={bi} title={btn.title} onClick={btn.onClick}
@@ -262,7 +357,7 @@ export function Home() {
         </div>
       </div>
 
-      {/* PDF Viewer */}
+      {/* Document Viewer */}
       {viewerOpen && viewingDocument && (
         <div style={s.modal} onClick={() => { setViewerOpen(false); setFullView(false); }}>
           <div style={{ background: 'white', borderRadius: fullView ? 0 : 20, width: fullView ? '100vw' : '85vw', height: fullView ? '100vh' : '85vh', maxWidth: fullView ? 'none' : 1100, display: 'flex', flexDirection: 'column', boxShadow: '0 30px 80px rgba(0,0,0,0.4)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
@@ -271,7 +366,12 @@ export function Home() {
                 <span style={{ fontSize: 18 }}>📄</span>
                 <span style={{ color: 'white', fontWeight: 700, fontSize: '0.95rem' }}>{viewingDocument.title}</span>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {getDocumentUrl(viewingDocument) && (
+                  <a href={getDocumentUrl(viewingDocument)} target="_blank" rel="noreferrer" style={{ color: 'white', textDecoration: 'none', background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px', fontSize: '0.8rem', fontWeight: 600 }}>
+                    Download
+                  </a>
+                )}
                 <button onClick={() => setFullView(p => !p)} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {fullView ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                 </button>
@@ -280,7 +380,77 @@ export function Home() {
                 </button>
               </div>
             </div>
-            <iframe src={viewingDocument.pdfUrl?.url} title={viewingDocument.title} style={{ flex: 1, border: 'none', background: '#f5f5f5' }} />
+            {(() => {
+              const viewerType = getViewerType(viewingDocument);
+              const url = getDocumentUrl(viewingDocument);
+
+              if (!url) {
+                return (
+                  <div style={{ flex: 1, background: '#f8fafc', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 10, padding: 24, textAlign: 'center' }}>
+                    <div style={{ fontSize: 44 }}>📄</div>
+                    <div style={{ fontWeight: 700, color: '#0f172a' }}>Preview not available</div>
+                    <div style={{ color: '#64748b', fontSize: '0.9rem' }}>File URL is missing or invalid.</div>
+                  </div>
+                );
+              }
+
+              if (viewerType === 'image') {
+                return (
+                  <div style={{ flex: 1, background: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+                    <img src={url} alt={viewingDocument.title} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 12 }} />
+                  </div>
+                );
+              }
+
+              // For word/pdf we rely on Google viewer only (no browser-side pdf parsing).
+              if (viewerType === 'word' || viewerType === 'pdf') {
+                return (
+                  <iframe
+                    src={`https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`}
+                    title={viewingDocument.title}
+                    style={{ flex: 1, border: 'none', background: '#f5f5f5' }}
+                  />
+                );
+              }
+
+              return (
+                <div style={{ flex: 1, background: '#f8fafc', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 10, padding: 24, textAlign: 'center' }}>
+                  <div style={{ fontSize: 44 }}>📄</div>
+                  <div style={{ fontWeight: 700, color: '#0f172a' }}>Preview not available for this file type</div>
+                  <div style={{ color: '#64748b', fontSize: '0.9rem' }}>You can still download it using the button above.</div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* History Modal */}
+      {historyModalOpen && (
+        <div style={s.modal} onClick={() => { setHistoryModalOpen(false); setHistoryItems([]); setSelectedDocument(null); }}>
+          <div style={{ ...s.modalBox, maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '18px 24px', background: 'linear-gradient(135deg, #0f172a, #1e3a5f)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'white', fontWeight: 700 }}>📜 Document History — {selectedDocument?.title}</span>
+              <button onClick={() => { setHistoryModalOpen(false); setHistoryItems([]); setSelectedDocument(null); }} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 16 }}>✕</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              {historyLoading ? (
+                <div style={{ textAlign: 'center', padding: 28, color: '#94a3b8' }}>Loading history...</div>
+              ) : historyItems.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 28, color: '#94a3b8' }}>No history found for this document.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {historyItems.map(h => (
+                    <div key={h._id} style={{ padding: 12, borderRadius: 10, background: '#fafafa', border: '1px solid #f1f5f9' }}>
+                      <div style={{ fontWeight: 800, marginBottom: 6 }}>{h.action.toUpperCase()}</div>
+                      <div style={{ color: '#64748b', fontSize: '0.85rem' }}>{new Date(h.createdAt).toLocaleString()}</div>
+                      <div style={{ marginTop: 8 }}>{JSON.stringify(h.details)}</div>
+                      <div style={{ marginTop: 8, color: '#94a3b8', fontSize: '0.82rem' }}>By: {h.performedBy || 'System'}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -318,12 +488,34 @@ export function Home() {
               <input value={editForm.title} onChange={e => setEditForm(p => ({ ...p, title: e.target.value }))} style={s.input} />
               <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Description</label>
               <textarea value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} rows={3} style={{ ...s.input, resize: 'vertical', height: 80 }} />
-              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>Replace PDF (optional)</label>
-              <input type="file" accept=".pdf" onChange={e => setFile(e.target.files[0])} style={{ marginBottom: 20 }} />
-              {file && <div style={{ fontSize: '0.8rem', color: '#10b981', marginBottom: 16, fontWeight: 600 }}>✅ {file.name}</div>}
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>Upload new file (optional)</label>
+              <input type="file" accept=".pdf,.jpg,.jpeg,.doc,.docx" onChange={e => setFile(e.target.files[0])} style={{ marginBottom: 12 }} />
+              {file && <div style={{ fontSize: '0.8rem', color: '#10b981', marginBottom: 12, fontWeight: 600 }}>✅ {file.name}</div>}
+              <div
+  style={{
+    background: "#EEF9FF",
+    border: "1px solid #60A5FA",
+    borderRadius: 10,
+    padding: "12px",
+    marginBottom: 15,
+    color: "#1E3A8A",
+    fontSize: "13px",
+    lineHeight: "20px",
+  }}
+>
+  <b>How this works</b>
+
+  <br /><br />
+
+  ✅ <b>Update</b> → Only updates the Title and Description.
+
+  <br />
+
+  ✅ <b>Save as New Version</b> → Upload an edited PDF, DOC, DOCX or Image and create a new version while keeping the old document in Version History.
+</div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button onClick={() => { setEditModalOpen(false); setFile(null); }} style={{ ...s.btn('#f1f5f9', '#374151'), flex: 1 }}>Cancel</button>
-                <button onClick={handleCreateVersion} style={{ ...s.btn('#f0fdf4', '#10b981'), flex: 1, border: '1.5px solid #86efac' }}>+ New Version</button>
+                <button onClick={handleCreateVersion} style={{ ...s.btn('#f0fdf4', '#10b981'), flex: 1, border: '1.5px solid #86efac' }}>Save as New Version</button>
                 <button onClick={handleUpdateDocument} style={{ ...s.btn('linear-gradient(135deg, #6366f1, #8b5cf6)'), flex: 1 }}>Update</button>
               </div>
             </div>
